@@ -1,0 +1,153 @@
+-- Criação de 2 tabelas do banco de dados e seus respectivos atributos.
+
+CREATE TABLE gado(
+    codigo SERIAL  NOT NULL PRIMARY KEY,
+    data_compra TIMESTAMP
+);
+
+CREATE TABLE raca(
+    codigo INT NOT NULL PRIMARY KEY,
+    nome VARCHAR (10),
+    peso FLOAT,
+    idade INT,
+    sexo VARCHAR (10),
+pasto VARCHAR (10)
+);
+
+
+-- Alteração na tabela gado para fazer a relação com a tabela raca, usando constraint e chave estrangeira
+
+ALTER TABLE raca
+ADD CONSTRAINT fk_gado_raca
+FOREIGN KEY (codigo)
+REFERENCES gado (codigo)
+ON DELETE CASCADE;
+
+-- Inserts de valores nos atributos de cada tabela, 5 no total
+INSERT INTO gado(data_compra) VALUES ('2022-04-14 23:38:21');
+INSERT INTO gado(data_compra) VALUES ('2022-03-29 21:24:27');
+INSERT INTO gado(data_compra) VALUES ('2022-02-12 07:12:02');
+INSERT INTO gado(data_compra) VALUES ('2022-07-04 15:09:12');
+INSERT INTO gado(data_compra) VALUES ('2022-09-22 02:02:33');
+
+-- Os inserts são em função do codigo gerado pelo banco
+INSERT INTO raca VALUES (6, 'tabapua', 4, 5,'macho', 'A');
+INSERT INTO raca VALUES (7, 'angus', 7, 7,'macho', 'C');
+INSERT INTO raca VALUES (3, 'nelore', 8, 10,'macho', 'A');
+INSERT INTO raca VALUES (4, 'angus', 12, 9,'femea', 'B');
+INSERT INTO raca VALUES (5, 'nelore', 13, 11,'femea', 'A');
+
+-- Criação de tabelas de backup para cada tabela
+
+CREATE TABLE backup_gado (
+    codigo INT,
+    data_compra TIMESTAMP,
+    data_backup TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario VARCHAR (100)
+);
+
+CREATE TABLE backup_raca (
+    codigo INT,
+    nome VARCHAR(10),
+    peso FLOAT,
+    idade INT,
+    sexo VARCHAR(10),
+    data_backup TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario VARCHAR (100),
+pasto VARCHAR (10)
+);
+
+-- Criação de 2 funções, uma para cada tabela de backup, que ira retornar uma trigger
+-- sempre que uma informação for excluida da tabela original
+-- e armazenaram as informações apagadas (old) na tabela backup
+-- Exemplo usado do 2 slide de trigger da aula
+
+CREATE OR REPLACE FUNCTION gado_excluir ()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO backup_gado (codigo, data_compra, data_backup, usuario)
+  VALUES (OLD.codigo, OLD.data_compra, current_timestamp, current_user);
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION raca_excluir ()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO backup_raca (codigo, nome, peso, idade, sexo, pasto, data_backup, usuario)
+  VALUES (OLD.codigo, OLD.nome, OLD.peso, OLD.idade, OLD.sexo, OLD.pasto, current_timestamp, current_user);
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Criação de trigger das funções acima, todas serão disparadas após ser deletadas de cada tabela
+-- e irá executar o procedimento de adiciona-las na tabela beckup.
+
+CREATE TRIGGER trg_raca AFTER DELETE ON raca
+FOR EACH ROW EXECUTE PROCEDURE raca_excluir ();
+
+CREATE TRIGGER trg_gado AFTER DELETE ON gado
+FOR EACH ROW EXECUTE PROCEDURE gado_excluir ();
+
+-- Criação de usuario com senha usando o role e comando login
+-- e atribuição somente para leitura para as tabelas de backup usando grant
+-- Usuario ja existe no role
+
+CREATE ROLE usuario WITH
+   LOGIN
+   PASSWORD '123';
+
+GRANT SELECT ON backup_gado, backup_raca TO usuario;
+
+-- Crianção de indexação para cada tabela criada
+
+CREATE INDEX gado_index ON gado (codigo);
+CREATE INDEX raca_index ON raca (codigo);
+CREATE INDEX backup_gado_index ON backup_gado (codigo);
+CREATE INDEX backup_raca_index ON backup_raca (codigo);
+
+-- View que junta as tabelas "gado" e "raca" para um melhor entendimento de todas
+-- as caracteristicas dos animais. Exemplo usado do slide de triggers da aula
+
+CREATE VIEW Dados_do_gado (codigo_gado, data_compra, codigo_raca, nome, peso, idade, sexo, pasto) AS
+SELECT gado.codigo, data_compra, raca.codigo, nome, peso, idade, sexo, pasto
+FROM gado JOIN raca USING (codigo)
+
+-- Função de alteração na view, usando novas alterações na tabela principal que se altera na view
+
+CREATE OR REPLACE FUNCTION view_dados ()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO gado (codigo, data_compra)
+  VALUES (NEW.codigo_gado, current_timestamp);
+  INSERT INTO raca (codigo, nome, peso, idade, sexo, pasto)
+  VALUES (NEW.codigo_raca, NEW.nome, NEW.peso, NEW.idade, NEW.sexo, NEW.pasto);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- Trigger que dispara sempre que for inserir dados novos (new) usando a substituição (instead of) na view
+-- e executa o procedimento
+
+CREATE TRIGGER trg_dados INSTEAD OF INSERT ON Dados_do_gado
+FOR EACH ROW EXECUTE PROCEDURE view_dados ();
+
+-- Criação de usuaio para ler e inserir na view
+
+GRANT SELECT, INSERT ON Dados_do_gado TO usuario;
+
+-- TESTES
+
+SELECT * FROM gado
+SELECT * FROM raca
+
+SELECT * FROM backup_gado
+SELECT * FROM backup_raca
+
+DELETE FROM gado WHERE codigo = 3
+DELETE FROM raca WHERE codigo = 3
+
+
+SELECT * FROM Dados_do_gado
+INSERT INTO Dados_do_gado VALUES (100, '2022-01-02 12:03:11', 100,  'angus', 6, 2, 'macho', 'A')
